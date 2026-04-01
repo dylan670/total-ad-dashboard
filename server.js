@@ -102,9 +102,20 @@ function naverRequest(method, apiPath, query = {}) {
 // ============================================================
 // 메타 API 요청
 // ============================================================
-function metaRequestSingle(reqPath) {
+function metaRequestSingle(fullUrl) {
   return new Promise((resolve, reject) => {
-    const options = { hostname: 'graph.facebook.com', path: encodeURI(reqPath), method: 'GET' };
+    // fullUrl이 https://로 시작하면 URL 파싱, 아니면 graph.facebook.com 사용
+    let hostname, reqPath;
+    if (fullUrl.startsWith('https://')) {
+      const parsed = new URL(fullUrl);
+      hostname = parsed.hostname;
+      reqPath = parsed.pathname + parsed.search;
+    } else {
+      hostname = 'graph.facebook.com';
+      reqPath = fullUrl;
+    }
+
+    const options = { hostname, path: reqPath, method: 'GET' };
     const req = https.request(options, res => {
       let data = '';
       res.on('data', chunk => (data += chunk));
@@ -121,19 +132,30 @@ function metaRequestSingle(reqPath) {
 // 페이징 자동 처리 — 모든 페이지를 수집
 async function metaRequest(reqPath) {
   let allData = [];
-  let url = reqPath;
+  // 첫 요청은 encodeURI 적용
+  let url = encodeURI(reqPath);
+  let isFirst = true;
   let pageCount = 0;
   const MAX_PAGES = 20;
 
   while (url && pageCount < MAX_PAGES) {
-    const result = await metaRequestSingle(url);
+    console.log(`[메타 API] 페이지 ${pageCount + 1} 요청중...`);
+    const result = await metaRequestSingle(isFirst ? url : url);
+
+    if (result.error && !result.data) {
+      console.error('[메타 API 에러]', result.error.message || result.error);
+      break;
+    }
+
     if (result.data && Array.isArray(result.data)) {
       allData = allData.concat(result.data);
+      console.log(`[메타 API] ${result.data.length}건 수집 (누적 ${allData.length}건)`);
     }
-    // 다음 페이지 URL 확인
+
+    // 다음 페이지
     if (result.paging && result.paging.next) {
-      // paging.next는 전체 URL이므로 hostname 제거
-      url = result.paging.next.replace('https://graph.facebook.com', '');
+      url = result.paging.next; // 전체 URL 그대로 사용
+      isFirst = false;
     } else {
       url = null;
     }
@@ -141,6 +163,7 @@ async function metaRequest(reqPath) {
     if (url) await delay(100);
   }
 
+  console.log(`[메타 API] 총 ${allData.length}건 수집 완료`);
   return { data: allData };
 }
 
